@@ -1,10 +1,12 @@
 package com.brandon3055.brandonscore.client;
 
+import codechicken.lib.CodeChickenLib;
 import codechicken.lib.colour.EnumColour;
 import codechicken.lib.render.RenderUtils;
 import codechicken.lib.render.buffer.TransformingVertexConsumer;
 import codechicken.lib.vec.Cuboid6;
 import codechicken.lib.vec.Vector3;
+import com.brandon3055.brandonscore.BrandonsCore;
 import com.brandon3055.brandonscore.api.IFOVModifierItem;
 import com.brandon3055.brandonscore.blocks.BlockBCore;
 import com.brandon3055.brandonscore.client.render.BlockEntityRendererTransparent;
@@ -13,6 +15,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
 import net.covers1624.quack.util.CrashLock;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
@@ -21,7 +24,6 @@ import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderDispatcher;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
-import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
@@ -33,11 +35,17 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.api.distmarker.OnlyIn;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
+import net.neoforged.neoforge.client.event.ComputeFovModifierEvent;
+import net.neoforged.neoforge.client.event.RenderHighlightEvent;
+import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.neoforge.client.ClientHooks;
-import net.neoforged.neoforge.client.event.*;
-import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.fml.common.Mod;
 
 import java.util.*;
 
@@ -59,6 +67,8 @@ public class BCClientEventHandler {
     private static int renderIndex = 0;
     private static LinkedList<ResourceKey<Level>> sortingOrder = new LinkedList<>();
     public static int elapsedTicks = 0;
+
+    private static final Set<BlockEntity> translucentBlockEntities = new ObjectOpenHashSet<>();
 
     private static Comparator<ResourceKey<Level>> sorter = (value, compare) -> {
         long totalValue = 0;
@@ -90,8 +100,13 @@ public class BCClientEventHandler {
         }
     }
 
+    public static <T extends BlockEntity> void addTranslucentBlockEntity(T blockEntity) {
+        translucentBlockEntities.add(blockEntity);
+    }
+
     @SubscribeEvent
     public void tickEnd(ClientTickEvent.Post event) {
+
         elapsedTicks++;
         if (Minecraft.getInstance().isPaused()) {
             return;
@@ -155,7 +170,6 @@ public class BCClientEventHandler {
 
         BlockEntityRenderDispatcher tileRenderDispatcher = Minecraft.getInstance().getBlockEntityRenderDispatcher();
         MultiBufferSource buffers = Minecraft.getInstance().renderBuffers().bufferSource();
-        LevelRenderer levelRenderer = event.getLevelRenderer();
         PoseStack poseStack = event.getPoseStack();
         Camera camera = event.getCamera();
         Vec3 vec3 = event.getCamera().getPosition();
@@ -163,34 +177,15 @@ public class BCClientEventHandler {
         double camY = vec3.y();
         double camZ = vec3.z();
 
-        for (SectionRenderDispatcher.RenderSection renderChunkInfo : levelRenderer.visibleSections) {
-            List<BlockEntity> list = renderChunkInfo.getCompiled().getRenderableBlockEntities();
-            for (BlockEntity tile : list) {
-                if (!ClientHooks.isBlockEntityRendererVisible(levelRenderer.blockEntityRenderDispatcher, tile, event.getFrustum())) continue;
-                BlockEntityRenderer<BlockEntity> renderer = tileRenderDispatcher.getRenderer(tile);
-                if (renderer instanceof BlockEntityRendererTransparent<BlockEntity> rendererTransparent) {
-                    BlockPos pos = tile.getBlockPos();
-                    poseStack.pushPose();
-                    poseStack.translate((double) pos.getX() - camX, (double) pos.getY() - camY, (double) pos.getZ() - camZ);
-                    renderTransparent(camera, rendererTransparent, tile, event.getPartialTick().getGameTimeDeltaPartialTick(false), poseStack, buffers);
-                    poseStack.popPose();
-                }
-            }
+        for (BlockEntity tile : translucentBlockEntities) {
+            BlockPos pos = tile.getBlockPos();
+            poseStack.pushPose();
+            poseStack.translate((double) pos.getX() - camX, (double) pos.getY() - camY, (double) pos.getZ() - camZ);
+            renderTransparent(camera, (BlockEntityRendererTransparent<BlockEntity>) tileRenderDispatcher.getRenderer(tile), tile, event.getPartialTick().getGameTimeDeltaTicks(), poseStack, buffers);
+            poseStack.popPose();
         }
 
-        synchronized (levelRenderer.globalBlockEntities) {
-            for (BlockEntity tile : levelRenderer.globalBlockEntities) {
-                if (!ClientHooks.isBlockEntityRendererVisible(levelRenderer.blockEntityRenderDispatcher, tile, event.getFrustum())) continue;
-                BlockEntityRenderer<BlockEntity> renderer = tileRenderDispatcher.getRenderer(tile);
-                if (renderer instanceof BlockEntityRendererTransparent<BlockEntity> rendererTransparent) {
-                    BlockPos blockpos3 = tile.getBlockPos();
-                    poseStack.pushPose();
-                    poseStack.translate((double) blockpos3.getX() - camX, (double) blockpos3.getY() - camY, (double) blockpos3.getZ() - camZ);
-                    renderTransparent(camera, rendererTransparent, tile, event.getPartialTick().getGameTimeDeltaPartialTick(false), poseStack, buffers);
-                    poseStack.popPose();
-                }
-            }
-        }
+        translucentBlockEntities.clear();
     }
 
     public <E extends BlockEntity> void renderTransparent(Camera camera, BlockEntityRendererTransparent<E> renderer, E tile, float partialTicks, PoseStack poseStack, MultiBufferSource buffers) {
