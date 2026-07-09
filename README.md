@@ -1,3 +1,6 @@
+# PLZ using https://modrinth.com/mod/draconic-evolution-render-patcher not this repo
+
+
 # BrandonsCore
 
 ## License / Use in Modpacks
